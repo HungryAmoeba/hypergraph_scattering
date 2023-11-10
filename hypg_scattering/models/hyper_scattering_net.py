@@ -110,7 +110,8 @@ class HyperScatteringModule(nn.Module):
         node_features = [X]
         # i need to generate identity features (or null) on the edges
         if Y is None:
-            Y0 = torch.zeros((hg.num_e, features))
+            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            Y0 = torch.zeros((hg.num_e, features)).to(device)
         else:
             Y0 = Y
         edge_features = [Y0]
@@ -164,6 +165,7 @@ class HSN(nn.Module):
         super().__init__()
         self.in_channels = in_channels 
         self.out_channels = out_channels
+        self.hidden_channels = hidden_channels
         self.trainable_laziness = trainable_laziness 
         self.trainable_scales = trainable_scales 
         self.activation = activation 
@@ -224,14 +226,16 @@ class HSN(nn.Module):
         return X,Y
 
 if __name__ == "__main__":
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     num_vertices = 15
-    hg = dhg.random.uniform_hypergraph_Gnp(3,num_vertices, .4)
+    hg = dhg.random.uniform_hypergraph_Gnp(3,num_vertices, .4).to(device)
     signal_features = 2
-    X = torch.rand(num_vertices, signal_features)
+    X = torch.rand(num_vertices, signal_features).to(device)
 
     hidden_channels = 16
     out_channels = 1
-    net = HSN(signal_features, hidden_channels, 1)
+    net = HSN(signal_features, hidden_channels, 1).to(device)
+
     node_pred, edge_pred = net(X, hg)
     import pdb; pdb.set_trace()
     node_pred.shape
