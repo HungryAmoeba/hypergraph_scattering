@@ -2,6 +2,11 @@ import dhg
 import torch
 import torch.nn as nn
 from typing import Tuple, Optional
+from einops import rearrange
+from torch.nn import Linear 
+from torch_geometric.nn.pool import global_mean_pool 
+from torch_geometric.nn import GCNConv 
+from torch_geometric.nn.norm import BatchNorm
 
 # a good way to make hyper edges:
 # dhg.Hypergraph.from_graph_kHop()
@@ -95,7 +100,7 @@ class HyperScatteringModule(nn.Module):
         elif activation == "modulus":
             self.activations = [lambda x: torch.abs(x)]
 
-    def forward(self, X, hg):
+    def forward(self, X, hg, Y: Optional[torch.Tensor] = None):
 
         """ This performs  Px with P = 1/2(I + AD^-1) (column stochastic matrix) at the different scales"""
 
@@ -104,7 +109,10 @@ class HyperScatteringModule(nn.Module):
         #s0 = X[:,:,None]
         node_features = [X]
         # i need to generate identity features (or null) on the edges
-        Y0 = torch.zeros((hg.num_e, features))
+        if Y is None:
+            Y0 = torch.zeros((hg.num_e, features))
+        else:
+            Y0 = Y
         edge_features = [Y0]
         #import pdb; pdb.set_trace()
         for i in range(16):
@@ -115,9 +123,9 @@ class HyperScatteringModule(nn.Module):
         #     # add an extra dimension to each tensor to avoid data loss while concatenating TODO: is there a faster way to do this?
         #     avgs[j] = avgs[j][None, :, :, :]  
         # Combine the diffusion levels into a single tensor.
-        import pdb; pdb.set_trace()
-        diffusion_levels = torch.cat(node_features)
-        edge_diffusion_levels = torch.cat(edge_features)
+        diffusion_levels = rearrange(node_features, 'i j k -> i j k')
+        edge_diffusion_levels = rearrange(edge_features, 'i j k -> i j k')
+        #edge_diffusion_levels = torch.cat(edge_features)
         
         # Reshape the 3d tensor into a 2d tensor and multiply with the wavelet_constructor matrix
         # This simulates the below subtraction:
@@ -128,24 +136,107 @@ class HyperScatteringModule(nn.Module):
         # filter4 = avgs[8] - avgs[16] 
         # filter5 = avgs[16]
 
-        # the shapes here are all wrong
-
-        wavelet_coeffs = torch.einsum("ij,jklm->iklm", self.wavelet_constructor, diffusion_levels) # J x num_nodes x num_features x 1
+        wavelet_coeffs = torch.einsum("ij,jkl->ikl", self.wavelet_constructor, diffusion_levels) # J x num_nodes x num_features x 1
+        wavelet_coeffs_edges = torch.einsum("ij,jkl->ikl", self.wavelet_constructor, edge_diffusion_levels)
         #subtracted = subtracted.view(6, x.shape[0], x.shape[1]) # reshape into given input shape
         activated = [self.activations[i](wavelet_coeffs) for i in range(len(self.activations))]
-        
-        s = torch.cat(activated, axis=-1).transpose(1,0)
-        
-        return s
+        activated_edges = [self.activations[i](wavelet_coeffs_edges) for i in range(len(self.activations))]
+        s_nodes = rearrange(activated, 'a w n f -> n (w f a)')
+        s_edges = rearrange(activated_edges, 'a w e f -> e (w f a)')
+
+        return s_nodes, s_edges
     
     def out_features(self):
-        return 12 * self.in_channels
+        return 6 * self.in_channels * len(self.activations)
 
+class HSN(nn.Module):
+    def __init__(self, 
+                 in_channels, 
+                 hidden_channels, 
+                 out_channels, 
+                 trainable_laziness = False, 
+                 trainable_scales = False, 
+                 activation = "blis", 
+                 fixed_weights=True, 
+                 layout = ['hsm','hsm'], 
+                 **kwargs):
         
+        super().__init__()
+        self.in_channels = in_channels 
+        self.out_channels = out_channels
+        self.trainable_laziness = trainable_laziness 
+        self.trainable_scales = trainable_scales 
+        self.activation = activation 
+        self.fixed_weights = fixed_weights
+
+        self.layout = layout 
+        self.layers = []
+        self.out_dimensions = [in_channels]
+
+        for layout_ in layout:
+            if layout_ == 'hsm':
+                self.layers.append(HyperScatteringModule(self.out_dimensions[-1], 
+                                                         trainable_laziness = trainable_laziness,
+                                                         trainable_scales = self.trainable_scales, 
+                                                         activation = self.activation, 
+                                                         fixed_weights=self.fixed_weights))
+                self.out_dimensions.append(self.layers[-1].out_features() )
+            elif layout_ == 'dim_reduction':
+                pass 
+            else:
+                raise ValueError("Not yet implemented")
+        
+        self.layers = nn.ModuleList(self.layers)
+
+        # currently share backend MLPs for the node and edge features
+        self.batch_norm = BatchNorm(self.out_dimensions[-1])
+        self.lin1 = Linear(self.out_dimensions[-1], self.out_dimensions[-1]//2 )
+        self.mean = global_mean_pool 
+        self.lin2 = Linear(self.out_dimensions[-1]//2, out_channels)
+        self.lin3 = Linear(out_channels, out_channels)
+
+        self.act = nn.ReLU()
+
+    def forward(self, X, hg, Y: Optional[torch.Tensor] = None):
+        for il, layer in enumerate(self.layers):
+            if self.layout[il] == 'hsm':
+                X, Y = layer(X, hg, Y)
+            elif self.layout[il] == 'dim_reduction':
+                pass 
+            else:
+                X, Y = layer(X, hg, Y)
+        
+        X = self.batch_norm(X)
+        X = self.lin1(X)
+        X = self.act(X)
+        X = self.lin2(X)
+        X = self.act(X)
+        X = self.lin3(X)
+
+        # compute the same process on the edges:
+        Y = self.batch_norm(Y)
+        Y = self.lin1(Y)
+        Y = self.act(Y)
+        Y = self.lin2(Y)
+        Y = self.act(Y)
+        Y = self.lin3(Y)
+
+        return X,Y
+
 if __name__ == "__main__":
     num_vertices = 15
     hg = dhg.random.uniform_hypergraph_Gnp(3,num_vertices, .4)
     signal_features = 2
     X = torch.rand(num_vertices, signal_features)
-    blis_layer = HyperScatteringModule(signal_features)
-    blis_layer(X, hg)
+
+    hidden_channels = 16
+    out_channels = 1
+    net = HSN(signal_features, hidden_channels, 1)
+    node_pred, edge_pred = net(X, hg)
+    import pdb; pdb.set_trace()
+    node_pred.shape
+
+
+
+
+
