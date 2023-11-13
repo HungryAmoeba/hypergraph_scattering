@@ -48,12 +48,12 @@ class HyperDiffusion(nn.Module):
         if not self.fixed_weights:
             self.lin = torch.nn.Linear(in_channels, out_channels)
 
-    def forward(self, X: torch.Tensor, hg: dhg.Hypergraph, Y: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, hg: dhg.Hypergraph, X: torch.Tensor, Y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if not self.fixed_weights:
             X = self.lin(X)
         
         # X has shape num_nodes, num_features
-
+        #import pdb; pdb.set_trace()
         # propagate from nodes to hyperedges 
         inv_deg_v = hg.D_v_neg_1.values()
         inv_deg_v = torch.nan_to_num(inv_deg_v)
@@ -77,7 +77,7 @@ class HyperScatteringModule(nn.Module):
     def __init__(self, in_channels, trainable_laziness = False, trainable_scales = False, activation = "blis", fixed_weights=True):
 
         super().__init__()
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        #device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.in_channels = in_channels
         self.trainable_laziness = trainable_laziness
         self.diffusion_layer1 = HyperDiffusion(in_channels, in_channels, trainable_laziness, fixed_weights)
@@ -99,8 +99,11 @@ class HyperScatteringModule(nn.Module):
             self.activations = [lambda x : x]
         elif activation == "modulus":
             self.activations = [lambda x: torch.abs(x)]
+        elif activation == "leaky_relu":
+            m = nn.LeakyReLU()
+            self.activations = [lambda x: m(x)]
 
-    def forward(self, X, hg, Y: Optional[torch.Tensor] = None):
+    def forward(self, hg: dhg.Hypergraph, X: torch.Tensor, Y: torch.Tensor):
 
         """ This performs  Px with P = 1/2(I + AD^-1) (column stochastic matrix) at the different scales"""
 
@@ -108,16 +111,11 @@ class HyperScatteringModule(nn.Module):
         features = X.shape[1]
         #s0 = X[:,:,None]
         node_features = [X]
-        # i need to generate identity features (or null) on the edges
-        if Y is None:
-            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            Y0 = torch.zeros((hg.num_e, features)).to(device)
-        else:
-            Y0 = Y
-        edge_features = [Y0]
+
+        edge_features = [Y]
         #import pdb; pdb.set_trace()
         for i in range(16):
-            node_feat, edge_feat = self.diffusion_layer1(node_features[-1], hg, edge_features[-1])
+            node_feat, edge_feat = self.diffusion_layer1(hg, node_features[-1], edge_features[-1])
             node_features.append(node_feat)
             edge_features.append(edge_feat)
         # for j in range(len(avgs)):
@@ -157,7 +155,7 @@ class HSN(nn.Module):
                  out_channels, 
                  trainable_laziness = False, 
                  trainable_scales = False, 
-                 activation = "blis", 
+                 activation = "modulus", 
                  fixed_weights=True, 
                  layout = ['hsm','hsm'], 
                  **kwargs):
@@ -192,51 +190,80 @@ class HSN(nn.Module):
 
         # currently share backend MLPs for the node and edge features
         self.batch_norm = BatchNorm(self.out_dimensions[-1])
-        self.lin1 = Linear(self.out_dimensions[-1], self.out_dimensions[-1]//2 )
-        self.mean = global_mean_pool 
-        self.lin2 = Linear(self.out_dimensions[-1]//2, out_channels)
-        self.lin3 = Linear(out_channels, out_channels)
 
-        self.act = nn.ReLU()
+        self.fc1 = Linear(self.out_dimensions[-1], 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 64)
+        self.fc4 = nn.Linear(64, 1)
+        
+        self.relu = nn.ReLU()
+        self.batch_norm1 = nn.BatchNorm1d(256)
+        self.batch_norm2 = nn.BatchNorm1d(128)
+        self.batch_norm3 = nn.BatchNorm1d(64)
 
-    def forward(self, X, hg, Y: Optional[torch.Tensor] = None):
+        self.mlp = nn.Sequential(
+            self.fc1,
+            self.batch_norm1,
+            self.relu,
+            self.fc2,
+            self.batch_norm2,
+            self.relu,
+            self.fc3,
+            self.batch_norm3,
+            self.relu,
+            self.fc4
+        )
+        # self.lin1 = Linear(self.out_dimensions[-1], self.out_dimensions[-1]//2 )
+        # self.mean = global_mean_pool 
+        # self.lin2 = Linear(self.out_dimensions[-1]//2, out_channels)
+        # self.lin3 = Linear(out_channels, out_channels)
+
+        # self.act = nn.ReLU()
+
+    def forward(self, hg: dhg.Hypergraph,  X: torch.Tensor, Y: torch.Tensor):
         for il, layer in enumerate(self.layers):
             if self.layout[il] == 'hsm':
-                X, Y = layer(X, hg, Y)
+                X, Y = layer(hg, X, Y)
             elif self.layout[il] == 'dim_reduction':
                 pass 
             else:
-                X, Y = layer(X, hg, Y)
-        
+                X, Y = layer(hg, X, Y)
+        #import pdb; pdb.set_trace()
         X = self.batch_norm(X)
-        X = self.lin1(X)
-        X = self.act(X)
-        X = self.lin2(X)
-        X = self.act(X)
-        X = self.lin3(X)
+        X = self.mlp(X)
+        # X = self.lin1(X)
+        # X = self.act(X)
+        # X = self.lin2(X)
+        # X = self.act(X)
+        # X = self.lin3(X)
 
         # compute the same process on the edges:
         Y = self.batch_norm(Y)
-        Y = self.lin1(Y)
-        Y = self.act(Y)
-        Y = self.lin2(Y)
-        Y = self.act(Y)
-        Y = self.lin3(Y)
+        Y = self.mlp(Y)
+        # Y = self.lin1(Y)
+        # Y = self.act(Y)
+        # Y = self.lin2(Y)
+        # Y = self.act(Y)
+        # Y = self.lin3(Y)
 
         return X,Y
 
 if __name__ == "__main__":
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    print(f"training on device {device}")
     num_vertices = 15
     hg = dhg.random.uniform_hypergraph_Gnp(3,num_vertices, .4).to(device)
     signal_features = 2
     X = torch.rand(num_vertices, signal_features).to(device)
+    num_edges = hg.num_e
+    Y = torch.zeros(num_edges, signal_features).to(device)
 
     hidden_channels = 16
     out_channels = 1
     net = HSN(signal_features, hidden_channels, 1).to(device)
+    #import pdb; pdb.set_trace()
 
-    node_pred, edge_pred = net(X, hg)
+    node_pred, edge_pred = net(hg ,X, Y)
     import pdb; pdb.set_trace()
     node_pred.shape
 

@@ -17,6 +17,7 @@ pyyaml = "^6.0.1"
 dhg = "^0.9.3"
 einops = "^0.7.0"
 torch-geometric = "^2.4.0"
+ipykernel = "^6.26.0"
 
 
 [build-system]
