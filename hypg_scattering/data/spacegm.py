@@ -355,6 +355,7 @@ class CellularGraphDataset(Dataset):
                         d_.original_center_node = d.original_center_node
                         d_.x_og = d.x
                 # i might've broken something with the transforms
+                d.x_og = d.x
                 torch.save(d, os.path.join(self.processed_dir, f'{d.region_id}.{d.component_id}.{sample}.gpt')) 
 
 
