@@ -30,9 +30,11 @@ from torch_geometric.utils import subgraph
 from collections.abc import Sequence
 
 import re
-
-from hypgg.data.spacegm_utils import get_feature_names, nx_to_tg_graph
-from hypgg.data.spacegm_utils import (
+import sys
+# fix this later!
+sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
+from hypg_scattering.data.spacegm_utils import get_feature_names, nx_to_tg_graph
+from hypg_scattering.data.spacegm_utils import (
     EDGE_TYPES,
     get_cell_type_metadata,
     get_biomarker_metadata,
@@ -333,7 +335,9 @@ class CellularGraphDataset(Dataset):
                 for sample in range(10):
                     center_ind = self.pick_center(d)
                     data_sample = self.calculate_subgraph_(d,center_ind)
-                    data_sample = self.create_hyperedges(data_sample)
+                    # don't add hyperedges for the time being
+
+                    #data_sample = self.create_hyperedges(data_sample)
                     torch.save(data_sample, os.path.join(self.pre_processed_dir, f'{d.region_id}.{d.component_id}.{sample}.gpt'))
         return
     
@@ -344,13 +348,14 @@ class CellularGraphDataset(Dataset):
             if d.num_nodes>5:
                 if self.pre_transform is not None:
                     for transform_fn in self.pre_transform:
-                        d_ = transform_fn(d)
+                        d = transform_fn(d)
                         d_.region_id = d.region_id
                         d_.component_id = d.component_id
                         d_.center_node_index = d.center_node_index
                         d_.original_center_node = d.original_center_node
                         d_.x_og = d.x
-                torch.save(d_, os.path.join(self.processed_dir, f'{d.region_id}.{d.component_id}.{sample}.gpt')) 
+                # i might've broken something with the transforms
+                torch.save(d, os.path.join(self.processed_dir, f'{d.region_id}.{d.component_id}.{sample}.gpt')) 
 
 
     def __getitem__(self, idx):

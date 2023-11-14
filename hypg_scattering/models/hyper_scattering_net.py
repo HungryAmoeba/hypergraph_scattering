@@ -46,11 +46,12 @@ class HyperDiffusion(nn.Module):
             self.lazy_layer = LazyLayer(in_channels)
         # in the future, I'd like to have different weights based on the hypergraph edge size
         if not self.fixed_weights:
-            self.lin = torch.nn.Linear(in_channels, out_channels)
+            self.lin_self = torch.nn.Linear(in_channels, out_channels)
+            self.lin_neigh = torch.nn.Linear(in_channels, out_channels)
 
     def forward(self, hg: dhg.Hypergraph, X: torch.Tensor, Y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        if not self.fixed_weights:
-            X = self.lin(X)
+        # if not self.fixed_weights:
+        #     X = self.lin(X)
         
         # X has shape num_nodes, num_features
         #import pdb; pdb.set_trace()
@@ -61,6 +62,11 @@ class HyperDiffusion(nn.Module):
         X_norm = torch.einsum('ij,i->ij', X, inv_deg_v)
 
         edge_feat = hg.v2e(X_norm, aggr = 'sum')
+        
+        if not self.fixed_weights:
+            edge_feat = self.lin_neigh(edge_feat)
+            Y = self.lin_self(edge_feat)
+
         if self.trainable_laziness and Y is not None:
             edge_feat = self.lazy_layer(edge_feat, Y)
 
@@ -70,6 +76,13 @@ class HyperDiffusion(nn.Module):
         edge_feat_norm = torch.einsum('ij,i->ij', edge_feat, inv_deg_e)
 
         node_feat = hg.e2v(edge_feat_norm, aggr = 'sum')
+
+        if not self.fixed_weights:
+            node_feat = self.lin_neigh(node_feat)
+            X = self.lin_self(X)
+        
+        if self.trainable_laziness:
+            node_feat = self.lazy_layer(node_feat, X)
         
         return node_feat, edge_feat 
 

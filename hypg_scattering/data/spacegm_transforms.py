@@ -82,6 +82,7 @@ class AddCenterCellType(object):
     def __call__(self, data):
         assert "center_node_index" in data, \
             "Only subgraphs with center nodes are supported, cannot find `center_node_index`"
+        import pdb; pdb.set_trace()
         center_node_feat = data.x_og[data.center_node_index].detach().clone()
         center_cell_type = center_node_feat[self.cell_type_feat]
         data.node_y = center_cell_type.long().view((1,))
@@ -113,6 +114,7 @@ class AddCenterCellIdentifier(object):
         pass
 
     def __call__(self, data):
+        import pdb; pdb.set_trace()
         assert "center_node_index" in data, \
             "Only subgraphs with center nodes are supported, cannot find `center_node_index`"
         center_cell_identifier_column = torch.zeros((data.x_og.shape[0], 1), dtype=data.x_og.dtype)

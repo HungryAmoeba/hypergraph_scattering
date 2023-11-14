@@ -8,7 +8,7 @@ import argparse
 from torch_geometric.datasets import TUDataset
 import torch_geometric.transforms as T
 from torch_geometric.loader import DataLoader
-from hypgg.ScatteringTransforms.pyg_scattering_transform import GraphScatteringTransform
+#from hypgg.ScatteringTransforms.pyg_scattering_transform import GraphScatteringTransform
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.model_selection import cross_val_score, KFold
@@ -17,13 +17,22 @@ import pdb
 import shutil
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
-from hypgg import DATA_DIR
-from hypgg.data.spacegm import CellularGraphDataset
-from hypgg.data.spacegm_transforms import AddCenterCellType, AddGraphLabel, FeatureMask 
+import yaml
+
+# fix this later!
+sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
+from hypg_scattering.data.spacegm import CellularGraphDataset
+from hypg_scattering.data.spacegm_transforms import AddCenterCellType, AddGraphLabel, FeatureMask 
 
 parser = argparse.ArgumentParser(description='Process scattering on a dataset')
 
+# Load the YAML file
+with open('../hypg_scattering/utils/config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
 
+# Extract the data_directory
+DATA_DIR = config['data_directory']
+print(sys.argv)
 n = len(sys.argv)
 if n != 5:
     print('Error. Usage: python TU_general.py dataset_name delete_processed classifier_name scattering_type')
@@ -34,7 +43,7 @@ dataset_name = str(sys.argv[1])
 delete = bool(int(sys.argv[2]))
 classifier = str(sys.argv[3])
 
-if classifier != 'svm' and classifier != 'logistic':
+if classifier not in {'svm', 'logistic'}:
     print('supported classifiers: svm and logistic')
     exit()
 
@@ -49,13 +58,14 @@ HIGHEST_MOMENT = 1
 AGGREGATION_TYPE = 'L1'
 
 scattering_type = str(sys.argv[4])
-if scattering_type != 'blip' and scattering_type != 'asym':
-    print('supported classifiers: blip and asym')
+print(scattering_type)
+if scattering_type not in {'blis' , 'asym'}:
+    print('supported scattering types: blip and asym')
     exit()
 
 #scatterTransform = GraphScatteringTransform(scattering_type, WAVELET_TYPE, MAX_SCALE, NUM_LAYERS, HIGHEST_MOMENT)
-scatterTransform = GraphScatteringTransform(scattering_type, WAVELET_TYPE, MAX_SCALE, NUM_LAYERS, AGGREGATION_TYPE)
-transformations = T.Compose([scatterTransform])
+#scatterTransform = GraphScatteringTransform(scattering_type, WAVELET_TYPE, MAX_SCALE, NUM_LAYERS, AGGREGATION_TYPE)
+#transformations = T.Compose([scatterTransform])
 #transformations = None
 
 # perhaps it is necessary to delete pre_transform every time it is used?
@@ -75,7 +85,7 @@ if delete:
 dataset_root = root_dir
 dataset_kwargs = {
     'transform': [],
-    'pre_transform': [transformations],
+    'pre_transform': None, # removed the scattering transform atm
     'pre_pre_transform': None,
     'raw_folder_name': 'graphs',  # os.path.join(dataset_root, "graph") is the folder where we saved nx graphs
     'processed_folder_name': 'tg_graph',  # processed dataset files will be stored here
@@ -83,7 +93,8 @@ dataset_kwargs = {
     #'node_features': ["cell_type", "SIZE", "biomarker_expression", "neighborhood_composition", "center_coord"],  # There are all the cellular features that we want the dataset to compute
     'node_features': ["cell_type", "SIZE", "biomarker_expression", "center_coord"],  # There are all the cellular features that we want the dataset to compute
     'edge_features': ["edge_type", "distance"],  # edge (cell pair) features
-    'subgraph_size': 5,  # indicating we want to sample 3-hop subgraphs from these regions (for training/inference), this is a core parameter for SPACE-GM.
+    # this is usualy 3, but I using 0 to indicidate that the whole graph should be used
+    'subgraph_size': 0,  # indicating we want to sample 3-hop subgraphs from these regions (for training/inference), this is a core parameter for SPACE-GM.
     'subgraph_source': 'on-the-fly',
     'subgraph_allow_distant_edge': True,
     'subgraph_radius_limit': 200.,
@@ -114,7 +125,7 @@ dataset.set_transforms(transformers)
 dataset[0]
 
 print(f'finished processing {dataset_name}')
-
+import pdb; pdb.set_trace()
 print("modeling using logistic regression")
 n_splits = 5
 print(f"training with {n_splits}-fold")
