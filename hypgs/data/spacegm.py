@@ -32,9 +32,9 @@ from collections.abc import Sequence
 import re
 import sys
 # fix this later!
-sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
-from hypg_scattering.data.spacegm_utils import get_feature_names, nx_to_tg_graph
-from hypg_scattering.data.spacegm_utils import (
+#sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
+from hypgs.data.spacegm_utils import get_feature_names, nx_to_tg_graph
+from hypgs.data.spacegm_utils import (
     EDGE_TYPES,
     get_cell_type_metadata,
     get_biomarker_metadata,

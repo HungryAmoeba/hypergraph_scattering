@@ -21,8 +21,8 @@ import yaml
 
 # fix this later!
 sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
-from hypg_scattering.data.spacegm import CellularGraphDataset
-from hypg_scattering.data.spacegm_transforms import AddCenterCellType, AddGraphLabel, FeatureMask 
+from hypgs.data.spacegm import CellularGraphDataset
+from hypgs.data.spacegm_transforms import AddCenterCellType, AddGraphLabel, FeatureMask 
 
 parser = argparse.ArgumentParser(description='Process scattering on a dataset')
 

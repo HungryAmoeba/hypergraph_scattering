@@ -1,8 +1,8 @@
 import os 
 import sys
 # fix this later!
-sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
-from hypg_scattering.models.hyper_scattering_net import HSN
+#sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
+from hypgs.models.hyper_scattering_net import HSN
 
 import dhg 
 import torch 
