@@ -20,7 +20,7 @@ from sklearn.pipeline import make_pipeline
 import yaml
 
 # fix this later!
-sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
+#sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
 from hypgs.data.spacegm import CellularGraphDataset
 from hypgs.data.spacegm_transforms import AddCenterCellType, AddGraphLabel, FeatureMask 
 
