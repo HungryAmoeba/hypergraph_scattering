@@ -18,6 +18,7 @@ import shutil
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
 import yaml
+from hypgs import DATA_DIR
 
 # fix this later!
 #sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
@@ -27,15 +28,15 @@ from hypgs.data.spacegm_transforms import AddCenterCellType, AddGraphLabel, Feat
 parser = argparse.ArgumentParser(description='Process scattering on a dataset')
 
 # Load the YAML file
-with open('../hypg_scattering/utils/config.yaml', 'r') as file:
-    config = yaml.safe_load(file)
+# with open('../hypg_scattering/utils/config.yaml', 'r') as file:
+#     config = yaml.safe_load(file)
 
-# Extract the data_directory
-DATA_DIR = config['data_directory']
+
 print(sys.argv)
 n = len(sys.argv)
 if n != 5:
-    print('Error. Usage: python TU_general.py dataset_name delete_processed classifier_name scattering_type')
+    print('Error. Usage: python spacegm_general.py dataset_name delete_processed classifier_name scattering_type')
+    print("example: python spacegm_general.py upmc 1 svm asym")
     exit()
 
 dataset_name = str(sys.argv[1])

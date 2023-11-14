@@ -195,7 +195,10 @@ class HSN(nn.Module):
                                                          fixed_weights=self.fixed_weights))
                 self.out_dimensions.append(self.layers[-1].out_features() )
             elif layout_ == 'dim_reduction':
-                pass 
+                input_dim = self.out_dimensions[-1]
+                output_dim = input_dim//2
+                self.out_dimensions.append(output_dim)
+                self.layers.append(nn.Linear(input_dim, output_dim))
             else:
                 raise ValueError("Not yet implemented")
         
@@ -238,7 +241,8 @@ class HSN(nn.Module):
             if self.layout[il] == 'hsm':
                 X, Y = layer(hg, X, Y)
             elif self.layout[il] == 'dim_reduction':
-                pass 
+                X = layer(X)
+                Y = layer(Y) 
             else:
                 X, Y = layer(hg, X, Y)
         #import pdb; pdb.set_trace()
