@@ -207,28 +207,36 @@ class HSN(nn.Module):
         # currently share backend MLPs for the node and edge features
         self.batch_norm = BatchNorm(self.out_dimensions[-1])
 
-        self.fc1 = Linear(self.out_dimensions[-1], 256)
-        self.fc2 = nn.Linear(256, 128)
-        self.fc3 = nn.Linear(128, 64)
-        self.fc4 = nn.Linear(64, 1)
+        self.fc1 = Linear(self.out_dimensions[-1], self.out_dimensions[-1]//2)
+        self.fc2 = nn.Linear(self.out_dimensions[-1]//2, self.out_channels)
+        #self.fc3 = nn.Linear(128, 64)
+        #self.fc4 = nn.Linear(64, self.out_channels)
         
         self.relu = nn.ReLU()
-        self.batch_norm1 = nn.BatchNorm1d(256)
-        self.batch_norm2 = nn.BatchNorm1d(128)
-        self.batch_norm3 = nn.BatchNorm1d(64)
+        self.batch_norm1 = nn.BatchNorm1d(self.out_dimensions[-1]//2)
+        #self.batch_norm2 = nn.BatchNorm1d(128)
+        #self.batch_norm3 = nn.BatchNorm1d(64)
 
         self.mlp = nn.Sequential(
             self.fc1,
             self.batch_norm1,
             self.relu,
-            self.fc2,
-            self.batch_norm2,
-            self.relu,
-            self.fc3,
-            self.batch_norm3,
-            self.relu,
-            self.fc4
+            self.fc2
         )
+
+        # self.mlp = nn.Sequential(
+        #     self.fc1,
+        #     self.batch_norm1,
+        #     self.relu,
+        #     self.fc2,
+        #     self.batch_norm2,
+        #     self.relu,
+        #     self.fc3,
+        #     self.batch_norm3,
+        #     self.relu,
+        #     self.fc4
+        # )
+
         # self.lin1 = Linear(self.out_dimensions[-1], self.out_dimensions[-1]//2 )
         # self.mean = global_mean_pool 
         # self.lin2 = Linear(self.out_dimensions[-1]//2, out_channels)
