@@ -24,7 +24,7 @@ from torch_geometric.nn.conv import MessagePassing
 from .hyper_scattering_net import LazyLayer
 from torch_geometric.utils import scatter, softmax
 
-class HGDiffsion(MessagePassing):
+class HyperDiffusion(MessagePassing):
     def __init__(
             self, 
             in_channels: int,
@@ -130,52 +130,142 @@ class HGDiffsion(MessagePassing):
             out_node = self.lazy_layer(out_node, x)
         return out_node
 
-# class HSNBatch(HSN):
-#     def __init__(self, 
-#                  in_channels, 
-#                  hidden_channels, 
-#                  out_channels, 
-#                  trainable_laziness = False, 
-#                  trainable_scales = False, 
-#                  activation = "modulus", 
-#                  fixed_weights=True, 
-#                  layout = ['hsm','hsm'], 
-#                  pooling = 'mean',
-#                  **kwargs):
+class HyperScatteringModule(nn.Module):
+    def __init__(self, in_channels, trainable_laziness=False, trainable_scales=False, activation="blis", fixed_weights=True, normalize="right", device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")):
+        super().__init__()
+        self.in_channels = in_channels
+        self.trainable_laziness = trainable_laziness
+        self.device = device
+        self.diffusion_layer1 = HyperDiffusion(in_channels, in_channels, trainable_laziness, fixed_weights, normalize)
+        self.wavelet_constructor = torch.nn.Parameter(torch.tensor([
+            [1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 1, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, -1],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+        ], dtype=torch.float, device=self.device, requires_grad=trainable_scales))
+        if activation == "blis":
+            self.activations = [lambda x: torch.relu(x), lambda x: torch.relu(-x)]
+        elif activation == None:
+            self.activations = [lambda x : x]
+        elif activation == "modulus":
+            self.activations = [lambda x: torch.abs(x)]
+        elif activation == "leaky_relu":
+            m = nn.LeakyReLU()
+            self.activations = [lambda x: m(x)]
+
+    def forward(self, x: torch.Tensor, hyperedge_index: torch.Tensor,
+                hyperedge_weight: Optional[torch.Tensor] = None,
+                hyperedge_attr: Optional[torch.Tensor] = None,
+                num_edges: Optional[int] = None):
+        features = x.shape[1]
+        node_features = [x]
+        edge_features = [hyperedge_attr]
+        for i in range(16):
+            node_feat, edge_feat = self.diffusion_layer1(x=node_features[-1], hyperedge_index=hyperedge_index, hyperedge_weight=hyperedge_weight, hyperedge_attr=edge_features[-1])
+            node_features.append(node_feat)
+            edge_features.append(edge_feat)
+        # Combine the diffusion levels into a single tensor.
+        diffusion_levels = rearrange(node_features, 'i j k -> i j k')
+        edge_diffusion_levels = rearrange(edge_features, 'i j k -> i j k')
+        wavelet_coeffs = torch.einsum("ij,jkl->ikl", self.wavelet_constructor, diffusion_levels) # J x num_nodes x num_features x 1
+        wavelet_coeffs_edges = torch.einsum("ij,jkl->ikl", self.wavelet_constructor, edge_diffusion_levels)
+        activated = [self.activations[i](wavelet_coeffs) for i in range(len(self.activations))]
+        activated_edges = [self.activations[i](wavelet_coeffs_edges) for i in range(len(self.activations))]
+        s_nodes = rearrange(activated, 'a w n f -> n (w f a)')
+        s_edges = rearrange(activated_edges, 'a w e f -> e (w f a)')
+        return s_nodes, s_edges
+    
+    def out_features(self):
+        return 6 * self.in_channels * len(self.activations)
+
+class HSN(nn.Module):
+    def __init__(self, 
+                in_channels, 
+                hidden_channels, 
+                out_channels, 
+                trainable_laziness = False, 
+                trainable_scales = False, 
+                activation = "modulus", 
+                fixed_weights=True, 
+                layout = ['hsm','hsm'], 
+                normalize="right",
+                device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
+                **kwargs):
+        super().__init__()
+        self.in_channels = in_channels 
+        self.out_channels = out_channels
+        self.hidden_channels = hidden_channels
+        self.trainable_laziness = trainable_laziness 
+        self.trainable_scales = trainable_scales 
+        self.activation = activation 
+        self.fixed_weights = fixed_weights
+        self.layout = layout 
+        self.layers = []
+        self.out_dimensions = [in_channels]
+        self.normalize = normalize
+        self.device = device
+
+        for layout_ in layout:
+            if layout_ == 'hsm':
+                self.layers.append(HyperScatteringModule(self.out_dimensions[-1], 
+                                                            trainable_laziness = trainable_laziness,
+                                                            trainable_scales = self.trainable_scales, 
+                                                            activation = self.activation, 
+                                                            fixed_weights=self.fixed_weights,
+                                                            normalize=normalize,
+                                                            device=kwargs.get("device", torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))))
+                self.out_dimensions.append(self.layers[-1].out_features() )
+            elif layout_ == 'dim_reduction':
+                input_dim = self.out_dimensions[-1]
+                output_dim = input_dim//2
+                self.out_dimensions.append(output_dim)
+                self.layers.append(nn.Linear(input_dim, output_dim))
+            else:
+                raise ValueError("Not yet implemented")
+             
+        self.layers = nn.ModuleList(self.layers)
+
+        # currently share backend MLPs for the node and edge features
+        self.batch_norm = BatchNorm(self.out_dimensions[-1])
+
+        self.fc1 = Linear(self.out_dimensions[-1], self.out_dimensions[-1]//2)
+        self.fc2 = nn.Linear(self.out_dimensions[-1]//2, self.out_channels)
+        #self.fc3 = nn.Linear(128, 64)
+        #self.fc4 = nn.Linear(64, self.out_channels)
         
-#         super().__init__(in_channels, hidden_channels, out_channels, trainable_laziness, trainable_scales, activation, fixed_weights, layout, **kwargs)
-#         self.pooling = pooling
+        self.relu = nn.ReLU()
+        self.batch_norm1 = nn.BatchNorm1d(self.out_dimensions[-1]//2)
+        #self.batch_norm2 = nn.BatchNorm1d(128)
+        #self.batch_norm3 = nn.BatchNorm1d(64)
+
+        self.mlp = nn.Sequential(
+            self.fc1,
+            self.batch_norm1,
+            self.relu,
+            self.fc2
+        )
 
 
-#     def forward(self, data):
-#         x, edge_index, edge_attr, y, batch = data.x, data.edge_index, data.edge_attr, data.y, data.batch
+    def forward(self, x: torch.Tensor, hyperedge_index: torch.Tensor,
+                hyperedge_weight: Optional[torch.Tensor] = None,
+                hyperedge_attr: Optional[torch.Tensor] = None,
+                num_edges: Optional[int] = None):
         
-#         NotImplemented
-#     # def forward(self, hg: dhg.Hypergraph,  X: torch.Tensor, Y: torch.Tensor):
-#     #     for il, layer in enumerate(self.layers):
-#     #         if self.layout[il] == 'hsm':
-#     #             X, Y = layer(hg, X, Y)
-#     #         elif self.layout[il] == 'dim_reduction':
-#     #             X = layer(X)
-#     #             Y = layer(Y) 
-#     #         else:
-#     #             X, Y = layer(hg, X, Y)
-#     #     #import pdb; pdb.set_trace()
-#     #     X = self.batch_norm(X)
-#     #     X = self.mlp(X)
-#     #     # X = self.lin1(X)
-#     #     # X = self.act(X)
-#     #     # X = self.lin2(X)
-#     #     # X = self.act(X)
-#     #     # X = self.lin3(X)
+        for il, layer in enumerate(self.layers):
+            if self.layout[il] == 'hsm':
+                x, hyperedge_attr = layer(x, hyperedge_index, hyperedge_weight, hyperedge_attr, num_edges)
+            elif self.layout[il] == 'dim_reduction':
+                x = layer(x)
+                hyperedge_attr = layer(hyperedge_attr) 
+            else:
+                raise ValueError
+        x = self.batch_norm(x)
+        x = self.mlp(x)
 
-#     #     # compute the same process on the edges:
-#     #     Y = self.batch_norm(Y)
-#     #     Y = self.mlp(Y)
-#     #     # Y = self.lin1(Y)
-#     #     # Y = self.act(Y)
-#     #     # Y = self.lin2(Y)
-#     #     # Y = self.act(Y)
-#     #     # Y = self.lin3(Y)
+        # compute the same process on the edges:
+        hyperedge_attr = self.batch_norm(hyperedge_attr)
+        hyperedge_attr = self.mlp(hyperedge_attr)
 
-#     #     return X,Y
+        return x, hyperedge_attr
