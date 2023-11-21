@@ -13,7 +13,7 @@ from hypgs.utils.data import get_HyperGraphData
 import dhg 
 import torch
 import unittest
-
+device = torch.device("cpu")
 
 def gen_hypg_deg_dataset(num_v, num_e, num_graphs):
     hypergraph_dataset = [dhg.random.hypergraph_Gnm(num_v, num_e, method = 'low_order_first') for _ in range(num_graphs)]
@@ -120,7 +120,7 @@ def test_vs_HyperDiffusion(trainable_laziness = False, fixed_weights=True):
 def test_vs_HyperScatteringModule(trainable_laziness = False, trainable_scales = False, activation = "blis", fixed_weights=True):
     signal_features, hg, starting_features, Y, hgdata = get_test_data()
     hsm = HyperScatteringModule(in_channels=signal_features, trainable_laziness = trainable_laziness, trainable_scales = trainable_scales, activation = activation, fixed_weights=fixed_weights)
-    hsm_pyg = HyperScatteringModulePYG(in_channels=signal_features, trainable_laziness = trainable_laziness, trainable_scales = trainable_scales, activation = activation, fixed_weights=fixed_weights, normalize="right")
+    hsm_pyg = HyperScatteringModulePYG(in_channels=signal_features, trainable_laziness = trainable_laziness, trainable_scales = trainable_scales, activation = activation, fixed_weights=fixed_weights, normalize="right", device=device)
     if trainable_laziness:
         hsm_pyg.diffusion_layer1.lazy_layer.weights = hsm.diffusion_layer1.lazy_layer.weights
     if not fixed_weights:
@@ -138,7 +138,7 @@ def test_vs_HSN(
         fixed_weights=True, 
         layout = ['hsm','hsm'], 
         normalize="right",
-        device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
+        device=device,
         **kwargs
     ):
     signal_features, hg, starting_features, Y, hgdata = get_test_data()

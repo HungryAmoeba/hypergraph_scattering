@@ -23,6 +23,7 @@ from torch_geometric.nn.norm import BatchNorm
 from torch_geometric.nn.conv import MessagePassing
 from .hyper_scattering_net import LazyLayer
 from torch_geometric.utils import scatter, softmax
+from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool, global_add_pool, GlobalAttention
 
 class HyperDiffusion(MessagePassing):
     def __init__(
@@ -171,6 +172,7 @@ class HyperScatteringModule(nn.Module):
         edge_diffusion_levels = rearrange(edge_features, 'i j k -> i j k')
         wavelet_coeffs = torch.einsum("ij,jkl->ikl", self.wavelet_constructor, diffusion_levels) # J x num_nodes x num_features x 1
         wavelet_coeffs_edges = torch.einsum("ij,jkl->ikl", self.wavelet_constructor, edge_diffusion_levels)
+        # TODO add batch norm here!
         activated = [self.activations[i](wavelet_coeffs) for i in range(len(self.activations))]
         activated_edges = [self.activations[i](wavelet_coeffs_edges) for i in range(len(self.activations))]
         s_nodes = rearrange(activated, 'a w n f -> n (w f a)')
@@ -192,6 +194,7 @@ class HSN(nn.Module):
                 layout = ['hsm','hsm'], 
                 normalize="right",
                 device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
+                pooling=None,
                 **kwargs):
         super().__init__()
         self.in_channels = in_channels 
@@ -206,6 +209,15 @@ class HSN(nn.Module):
         self.out_dimensions = [in_channels]
         self.normalize = normalize
         self.device = device
+        self.pooling = pooling
+        if pooling == 'attention':
+            raise NotImplementedError
+            # gate_nn = torch.nn.Sequential(
+            #     torch.nn.Linear(hidden_channels, 1),
+            #     torch.nn.Sigmoid()
+            # )
+            # self.attention_pool = GlobalAttention(gate_nn=gate_nn)
+
 
         for layout_ in layout:
             if layout_ == 'hsm':
@@ -251,17 +263,33 @@ class HSN(nn.Module):
     def forward(self, x: torch.Tensor, hyperedge_index: torch.Tensor,
                 hyperedge_weight: Optional[torch.Tensor] = None,
                 hyperedge_attr: Optional[torch.Tensor] = None,
-                num_edges: Optional[int] = None):
+                num_edges: Optional[int] = None,
+                batch: Optional[torch.Tensor] = None):
         
         for il, layer in enumerate(self.layers):
             if self.layout[il] == 'hsm':
                 x, hyperedge_attr = layer(x, hyperedge_index, hyperedge_weight, hyperedge_attr, num_edges)
+                # TODO add batch norm before non-linearity inside the hsm!
             elif self.layout[il] == 'dim_reduction':
-                x = layer(x)
+                x = layer(x) # TODO add batch norm and non-linearity!
                 hyperedge_attr = layer(hyperedge_attr) 
             else:
                 raise ValueError
+        # Apply selected pooling
+        if self.pooling is not None:
+            assert batch is not None
+        if self.pooling == 'mean':
+            x = global_mean_pool(x, batch)
+        elif self.pooling == 'max':
+            x = global_max_pool(x, batch)
+        elif self.pooling == 'sum':
+            x = global_add_pool(x, batch)
+        elif self.pooling == 'attention':
+            raise NotImplementedError
+            # x = self.attention_pool(x, batch)
+
         x = self.batch_norm(x)
+
         x = self.mlp(x)
 
         # compute the same process on the edges:
