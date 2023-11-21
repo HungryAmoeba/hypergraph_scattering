@@ -19,6 +19,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
 import yaml
 from hypgs import DATA_DIR
+from hypgs.utils.hypergraph_utils import data_to_hg
 
 # fix this later!
 #sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
