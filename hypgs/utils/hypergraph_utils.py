@@ -2,6 +2,7 @@ from torch_geometric.utils import to_undirected
 import dhg 
 import torch
 from torch_geometric.utils import from_networkx
+from torch_geometric.transforms import BaseTransform
 
 import torch_geometric
 import tqdm
@@ -27,7 +28,7 @@ def data_to_hg(data, add_k_hop = 0, min_k_hop_size = 0):
     hg = dhg.Hypergraph(data.num_nodes, edges_as_tuples)
     return hg
 
-def get_cliques_planar(graph):
+def get_cliques_planar(graph, njobs = 1):
     """
     Computes the 3 and 4-cliques from a torch geometric graph.
 
@@ -68,12 +69,26 @@ def get_cliques_planar(graph):
             four_cliques = torch.cat(four_cliques).T
             four_cliques_list.append(four_cliques)
 
-    three_cliques = torch.cat(three_cliques_list, dim = 1)
-    four_cliques = torch.cat(four_cliques_list, dim = 1)
+    three_cliques = torch.sort(torch.cat(three_cliques_list, dim = 1),0)[0]
+    four_cliques = torch.sort(torch.cat(four_cliques_list, dim = 1))[0]
+
+    three_cliques = torch.unique(three_cliques, sorted = False, dim = 1)
+    four_cliques = torch.unique(four_cliques, sorted = False, dim = 1)
 
     graph.three_cliques = three_cliques
     graph.four_cliques = four_cliques
+    
     return graph
+
+class CliqueHyperEdgeTransform(BaseTransform):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self,data):
+        return get_cliques_planar(data)
+    
+    def __repr__(self):
+        return f"CliqueHyperEdgeTransform"
 
 if __name__ == '__main__': 
     # visualize converting an ER graph into a hypergraph with the desired features

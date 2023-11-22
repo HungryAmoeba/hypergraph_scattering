@@ -5,6 +5,8 @@ import os
 import sys
 import argparse 
 
+import itertools
+
 from torch_geometric.datasets import TUDataset
 import torch_geometric.transforms as T
 from torch_geometric.loader import DataLoader
@@ -19,10 +21,11 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
 import yaml
 from hypgs import DATA_DIR
-from hypgs.utils.hypergraph_utils import data_to_hg
+from hypgs.utils.hypergraph_utils import CliqueHyperEdgeTransform
+
 
 # fix this later!
-#sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
+# sys.path.insert(0, '/home/sumry2023_cqx3/hypergraph_scattering')
 from hypgs.data.spacegm import CellularGraphDataset
 from hypgs.data.spacegm_transforms import AddCenterCellType, AddGraphLabel, FeatureMask 
 
@@ -87,7 +90,7 @@ if delete:
 dataset_root = root_dir
 dataset_kwargs = {
     'transform': [],
-    'pre_transform': None, # removed the scattering transform atm
+    'pre_transform': [CliqueHyperEdgeTransform()], # removed the scattering transform atm
     'pre_pre_transform': None,
     'raw_folder_name': 'graphs',  # os.path.join(dataset_root, "graph") is the folder where we saved nx graphs
     'processed_folder_name': 'tg_graph',  # processed dataset files will be stored here
@@ -112,19 +115,23 @@ dataset_kwargs.update(feature_kwargs)
 
 dataset = CellularGraphDataset(dataset_root, **dataset_kwargs)
 
+
 graph_label_file = os.path.join(dataset_root, "upmc_labels_renamed.csv")
 transformers = [
     # `AddCenterCellType` will add `node_y` attribute to the subgraph for node-level prediction task
     # In this task we will mask the cell type of the center cell and use its neighborhood to predict the true cell type
-    AddCenterCellType(dataset),
+    #AddCenterCellType(dataset),
+    
     # `AddGraphLabel` will add `graph_y` and `graph_w` attributes to the subgraph for graph-level prediction task
     AddGraphLabel(graph_label_file, tasks=['survival_status']),
+    
     # Transformer `FeatureMask` will zero mask all feature items not included in its argument
     # In this tutorial we perform training/inference using cell types and center cell's size feature
     #FeatureMask(dataset, use_center_node_features=['cell_type', 'SIZE'], use_neighbor_node_features=['cell_type']),
 ]
 dataset.set_transforms(transformers)
-dataset[0]
+
+breakpoint()
 
 print(f'finished processing {dataset_name}')
 import pdb; pdb.set_trace()
