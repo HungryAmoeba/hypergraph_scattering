@@ -10,7 +10,6 @@ from torch_geometric.datasets import TUDataset
 from dhg import Hypergraph
 from hypgs.utils.data import HGDataset
 from torch_geometric.loader import DataLoader
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 original_dataset = TUDataset(root='../data/', name="MUTAG", use_node_attr=True)
 to_hg_func = lambda g: Hypergraph.from_graph_kHop(g, 1)
@@ -50,15 +49,9 @@ def testHSNPooling(trainable_laziness, trainable_scales, activation, fixed_weigh
                 layout=['hsm'], 
                 normalize='right', 
                 pooling=pooling,
-                device=device
-            ).to(device)
+            )
     batch = next(iter(dl))
     x, edge_index, edge_attr, y, batch_idx = batch.x, batch.edge_index, batch.edge_attr, batch.y, batch.batch
-    x = x.to(device)
-    edge_index = edge_index.to(device)
-    edge_attr = edge_attr.to(device)
-    y = y.to(device)
-    batch_idx = batch_idx.to(device)
     node_feat, he_feat = model(x=x, hyperedge_index=edge_index, hyperedge_attr=edge_attr, batch=batch_idx)
     if pooling is not None:
         assert node_feat.size() == (32, 2)
