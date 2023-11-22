@@ -14,6 +14,7 @@ modified from https://pytorch-geometric.readthedocs.io/en/latest/_modules/torch_
 import dhg 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import Tuple, Optional
 from einops import rearrange
 from torch.nn import Linear 
@@ -24,6 +25,8 @@ from torch_geometric.nn.conv import MessagePassing
 from .hyper_scattering_net import LazyLayer
 from torch_geometric.utils import scatter, softmax
 from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool, global_add_pool, GlobalAttention
+import pytorch_lightning as pl
+import torchmetrics
 
 class HyperDiffusion(MessagePassing):
     def __init__(
@@ -132,11 +135,10 @@ class HyperDiffusion(MessagePassing):
         return out_node
 
 class HyperScatteringModule(nn.Module):
-    def __init__(self, in_channels, trainable_laziness=False, trainable_scales=False, activation="blis", fixed_weights=True, normalize="right", device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")):
+    def __init__(self, in_channels, trainable_laziness=False, trainable_scales=False, activation="blis", fixed_weights=True, normalize="right"):
         super().__init__()
         self.in_channels = in_channels
         self.trainable_laziness = trainable_laziness
-        self.device = device
         self.diffusion_layer1 = HyperDiffusion(in_channels, in_channels, trainable_laziness, fixed_weights, normalize)
         self.wavelet_constructor = torch.nn.Parameter(torch.tensor([
             [1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -145,7 +147,7 @@ class HyperScatteringModule(nn.Module):
             [0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, -1],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
-        ], dtype=torch.float, device=self.device, requires_grad=trainable_scales))
+        ], dtype=torch.float, requires_grad=trainable_scales))
         if activation == "blis":
             self.activations = [lambda x: torch.relu(x), lambda x: torch.relu(-x)]
         elif activation == None:
@@ -182,19 +184,62 @@ class HyperScatteringModule(nn.Module):
     def out_features(self):
         return 6 * self.in_channels * len(self.activations)
 
-class HSN(nn.Module):
+class HSN(pl.LightningModule):
+    """
+    Hypergraph Scattering Network (HSN) module.
+    Now assuming only using the node features output.
+
+    Args:
+        in_channels (int): Number of input channels.
+        hidden_channels (int): Number of hidden channels.
+        out_channels (int): Number of output channels.
+        trainable_laziness (bool): Whether the laziness parameter is trainable.
+        trainable_scales (bool): Whether the scales parameter is trainable.
+        activation (str): Activation function to use.
+        fixed_weights (bool): Whether the weights are fixed.
+        layout (list): List of strings specifying the layout of the network.
+        normalize (str): Normalization method to use.
+        pooling (str): Pooling method to use.
+        task (str): Task type.
+        lr (float): Learning rate.
+        **kwargs: Additional keyword arguments.
+
+    Attributes:
+        in_channels (int): Number of input channels.
+        out_channels (int): Number of output channels.
+        hidden_channels (int): Number of hidden channels.
+        trainable_laziness (bool): Whether the laziness parameter is trainable.
+        trainable_scales (bool): Whether the scales parameter is trainable.
+        activation (str): Activation function to use.
+        fixed_weights (bool): Whether the weights are fixed.
+        layout (list): List of strings specifying the layout of the network.
+        layers (nn.ModuleList): List of network layers.
+        out_dimensions (list): List of output dimensions.
+        normalize (str): Normalization method to use.
+        pooling (str): Pooling method to use.
+        lr (float): Learning rate.
+        batch_norm (BatchNorm): Batch normalization layer.
+        fc1 (Linear): Fully connected layer 1.
+        fc2 (nn.Linear): Fully connected layer 2.
+        relu (nn.ReLU): ReLU activation function.
+        batch_norm1 (nn.BatchNorm1d): Batch normalization layer 1.
+        mlp (nn.Sequential): MLP network.
+
+    """
+
     def __init__(self, 
                 in_channels, 
                 hidden_channels, 
                 out_channels, 
-                trainable_laziness = False, 
-                trainable_scales = False, 
-                activation = "modulus", 
+                trainable_laziness=False, 
+                trainable_scales=False, 
+                activation="modulus", 
                 fixed_weights=True, 
-                layout = ['hsm','hsm'], 
+                layout=['hsm', 'hsm'], 
                 normalize="right",
-                device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
                 pooling=None,
+                task='classification', # assume on node only (not on hypergraphs)
+                lr=1e-3,
                 **kwargs):
         super().__init__()
         self.in_channels = in_channels 
@@ -208,8 +253,10 @@ class HSN(nn.Module):
         self.layers = []
         self.out_dimensions = [in_channels]
         self.normalize = normalize
-        self.device = device
         self.pooling = pooling
+        self.lr = lr
+        assert task in ['classification', 'regression']
+        self.task = task
         if pooling == 'attention':
             raise NotImplementedError
             # gate_nn = torch.nn.Sequential(
@@ -222,16 +269,16 @@ class HSN(nn.Module):
         for layout_ in layout:
             if layout_ == 'hsm':
                 self.layers.append(HyperScatteringModule(self.out_dimensions[-1], 
-                                                            trainable_laziness = trainable_laziness,
-                                                            trainable_scales = self.trainable_scales, 
-                                                            activation = self.activation, 
+                                                            trainable_laziness=trainable_laziness,
+                                                            trainable_scales=self.trainable_scales, 
+                                                            activation=self.activation, 
                                                             fixed_weights=self.fixed_weights,
                                                             normalize=normalize,
-                                                            device=kwargs.get("device", torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))))
-                self.out_dimensions.append(self.layers[-1].out_features() )
+                                                            ))
+                self.out_dimensions.append(self.layers[-1].out_features())
             elif layout_ == 'dim_reduction':
                 input_dim = self.out_dimensions[-1]
-                output_dim = input_dim//2
+                output_dim = input_dim // 2
                 self.out_dimensions.append(output_dim)
                 self.layers.append(nn.Linear(input_dim, output_dim))
             else:
@@ -239,18 +286,13 @@ class HSN(nn.Module):
              
         self.layers = nn.ModuleList(self.layers)
 
-        # currently share backend MLPs for the node and edge features
         self.batch_norm = BatchNorm(self.out_dimensions[-1])
 
-        self.fc1 = Linear(self.out_dimensions[-1], self.out_dimensions[-1]//2)
-        self.fc2 = nn.Linear(self.out_dimensions[-1]//2, self.out_channels)
-        #self.fc3 = nn.Linear(128, 64)
-        #self.fc4 = nn.Linear(64, self.out_channels)
+        self.fc1 = Linear(self.out_dimensions[-1], self.out_dimensions[-1] // 2)
+        self.fc2 = nn.Linear(self.out_dimensions[-1] // 2, self.out_channels)
         
         self.relu = nn.ReLU()
-        self.batch_norm1 = nn.BatchNorm1d(self.out_dimensions[-1]//2)
-        #self.batch_norm2 = nn.BatchNorm1d(128)
-        #self.batch_norm3 = nn.BatchNorm1d(64)
+        self.batch_norm1 = nn.BatchNorm1d(self.out_dimensions[-1] // 2)
 
         self.mlp = nn.Sequential(
             self.fc1,
@@ -259,13 +301,33 @@ class HSN(nn.Module):
             self.fc2
         )
 
+        # Metrics
+        if self.task == 'classification':
+            self.accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=self.out_channels)
+            self.auroc = torchmetrics.AUROC(task="multiclass", num_classes=self.out_channels, pos_label=1)
+
 
     def forward(self, x: torch.Tensor, hyperedge_index: torch.Tensor,
                 hyperedge_weight: Optional[torch.Tensor] = None,
                 hyperedge_attr: Optional[torch.Tensor] = None,
                 num_edges: Optional[int] = None,
                 batch: Optional[torch.Tensor] = None):
-        
+        """
+        Forward pass of the HSN module.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            hyperedge_index (torch.Tensor): Hyperedge index tensor.
+            hyperedge_weight (torch.Tensor, optional): Hyperedge weight tensor.
+            hyperedge_attr (torch.Tensor, optional): Hyperedge attribute tensor.
+            num_edges (int, optional): Number of edges.
+            batch (torch.Tensor, optional): Batch tensor.
+
+        Returns:
+            torch.Tensor: Output tensor.
+            torch.Tensor: Hyperedge attribute tensor.
+
+        """
         for il, layer in enumerate(self.layers):
             if self.layout[il] == 'hsm':
                 x, hyperedge_attr = layer(x, hyperedge_index, hyperedge_weight, hyperedge_attr, num_edges)
@@ -296,4 +358,43 @@ class HSN(nn.Module):
         hyperedge_attr = self.batch_norm(hyperedge_attr)
         hyperedge_attr = self.mlp(hyperedge_attr)
 
+        if self.task == 'classification':
+            x = F.log_softmax(x, dim=1)
+        
         return x, hyperedge_attr
+
+    def common_step(self, batch, batch_idx, phase):
+        x, edge_index, edge_attr, y, batch_id = batch.x, batch.edge_index, batch.edge_attr, batch.y, batch.batch
+        out, _ = self.forward(x, edge_index, hyperedge_attr=edge_attr, batch=batch_id)
+
+        if self.task == 'classification':
+            loss = F.cross_entropy(out, y)
+        elif self.task == 'regression':
+            loss = F.mse_loss(out, y)
+        else:
+            raise ValueError(f"task must be one of 'classification' or 'regression', not {self.task}")
+    
+        # Logging metrics
+        self.log(f'{phase}_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        
+        if self.task == 'classification':
+            acc = self.accuracy(out, y)
+            auc = self.auroc(out, y)
+            self.log(f'{phase}_acc', acc, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+            self.log(f'{phase}_auc', auc, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        loss = self.common_step(batch, batch_idx, 'train')
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        loss = self.common_step(batch, batch_idx, 'val')
+
+    def test_step(self, batch, batch_idx):
+        loss = self.common_step(batch, batch_idx, 'test')
+    
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        return optimizer
