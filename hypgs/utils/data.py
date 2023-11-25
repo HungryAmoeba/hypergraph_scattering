@@ -77,3 +77,15 @@ class HGDataset(Dataset):
 
     def get(self, idx):
         return self.data_list[idx]
+
+class HGDatasetFromDGL(Dataset):
+    def __init__(self, HG, X, Y, lbl, transform=None, pre_transform=None):
+        super(HGDatasetFromDGL, self).__init__('.', transform, pre_transform)
+        hgdata = get_HyperGraphData(HG, X, Y, lbl)
+        self.data_list = [hgdata]
+
+    def len(self):
+        return len(self.data_list)
+
+    def get(self, idx):
+        return self.data_list[idx]

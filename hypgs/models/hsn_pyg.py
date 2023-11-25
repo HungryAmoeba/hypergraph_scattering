@@ -202,6 +202,7 @@ class HSN(pl.LightningModule):
         pooling (str): Pooling method to use.
         task (str): Task type.
         lr (float): Learning rate.
+        weight_decay (float): Weight decay.
         **kwargs: Additional keyword arguments.
 
     Attributes:
@@ -240,6 +241,7 @@ class HSN(pl.LightningModule):
                 pooling=None,
                 task='classification', # assume on node only (not on hypergraphs)
                 lr=1e-3,
+                weight_decay=1e-5,
                 **kwargs):
         super().__init__()
         self.in_channels = in_channels 
@@ -255,7 +257,9 @@ class HSN(pl.LightningModule):
         self.normalize = normalize
         self.pooling = pooling
         self.lr = lr
+
         assert task in ['classification', 'regression', 'node_representation']
+
         self.task = task
         if pooling == 'attention':
             raise NotImplementedError
@@ -401,5 +405,5 @@ class HSN(pl.LightningModule):
         loss = self.common_step(batch, batch_idx, 'test')
     
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         return optimizer
