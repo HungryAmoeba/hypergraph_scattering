@@ -255,7 +255,7 @@ class HSN(pl.LightningModule):
         self.normalize = normalize
         self.pooling = pooling
         self.lr = lr
-        assert task in ['classification', 'regression']
+        assert task in ['classification', 'regression', 'node_representation']
         self.task = task
         if pooling == 'attention':
             raise NotImplementedError
@@ -285,7 +285,6 @@ class HSN(pl.LightningModule):
                 raise ValueError("Not yet implemented")
              
         self.layers = nn.ModuleList(self.layers)
-
         self.batch_norm = BatchNorm(self.out_dimensions[-1])
 
         self.fc1 = Linear(self.out_dimensions[-1], self.out_dimensions[-1] // 2)
@@ -304,7 +303,8 @@ class HSN(pl.LightningModule):
         # Metrics
         if self.task == 'classification':
             self.accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=self.out_channels)
-            self.auroc = torchmetrics.AUROC(task="multiclass", num_classes=self.out_channels, pos_label=1)
+            #self.auroc = torchmetrics.AUROC(task="multiclass", num_classes=self.out_channels, pos_label=1)
+            self.auroc = torchmetrics.AUROC(task="multiclass", num_classes=self.out_channels)
 
 
     def forward(self, x: torch.Tensor, hyperedge_index: torch.Tensor,
@@ -337,19 +337,20 @@ class HSN(pl.LightningModule):
                 hyperedge_attr = layer(hyperedge_attr) 
             else:
                 raise ValueError
-        # Apply selected pooling
-        if self.pooling is not None:
-            assert batch is not None
-        if self.pooling == 'mean':
-            x = global_mean_pool(x, batch)
-        elif self.pooling == 'max':
-            x = global_max_pool(x, batch)
-        elif self.pooling == 'sum':
-            x = global_add_pool(x, batch)
-        elif self.pooling == 'attention':
-            raise NotImplementedError
-            # x = self.attention_pool(x, batch)
-
+            
+        if self.task == 'classification':
+            # Apply selected pooling
+            if self.pooling is not None:
+                assert batch is not None
+            if self.pooling == 'mean':
+                x = global_mean_pool(x, batch)
+            elif self.pooling == 'max':
+                x = global_max_pool(x, batch)
+            elif self.pooling == 'sum':
+                x = global_add_pool(x, batch)
+            elif self.pooling == 'attention':
+                raise NotImplementedError
+                # x = self.attention_pool(x, batch)
         x = self.batch_norm(x)
 
         x = self.mlp(x)
@@ -359,8 +360,10 @@ class HSN(pl.LightningModule):
         hyperedge_attr = self.mlp(hyperedge_attr)
 
         if self.task == 'classification':
-            x = F.log_softmax(x, dim=1)
-        
+            # I don't think this is needed since F.cross_entropy assumes unnormalized logits
+            #x = F.log_softmax(x, dim=1)
+            pass
+
         return x, hyperedge_attr
 
     def common_step(self, batch, batch_idx, phase):
@@ -371,6 +374,8 @@ class HSN(pl.LightningModule):
             loss = F.cross_entropy(out, y)
         elif self.task == 'regression':
             loss = F.mse_loss(out, y)
+        elif self.task == 'node_representation':
+            loss = 0
         else:
             raise ValueError(f"task must be one of 'classification' or 'regression', not {self.task}")
     
