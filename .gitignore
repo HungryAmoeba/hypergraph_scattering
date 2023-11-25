@@ -163,3 +163,4 @@ experiments/figures/*
 #.idea/
 
 data/
+notebooks/lightning_logs/*
