@@ -259,7 +259,7 @@ class HSN(pl.LightningModule):
         self.lr = lr
 
         assert task in ['classification', 'regression', 'node_representation']
-
+        self.weight_decay = weight_decay
         self.task = task
         if pooling == 'attention':
             raise NotImplementedError
