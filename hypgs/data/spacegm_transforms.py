@@ -83,7 +83,7 @@ class AddCenterCellType(object):
         assert "center_node_index" in data, \
             "Only subgraphs with center nodes are supported, cannot find `center_node_index`"
         #import pdb; pdb.set_trace()
-        center_node_feat = data.x_og[data.center_node_index].detach().clone()
+        center_node_feat = data.x[data.center_node_index].detach().clone()
         center_cell_type = center_node_feat[self.cell_type_feat]
         data.node_y = center_cell_type.long().view((1,))
         return data
@@ -100,7 +100,7 @@ class AddCenterCellBiomarkerExpression(object):
     def __call__(self, data):
         assert "center_node_index" in data, \
             "Only subgraphs with center nodes are supported, cannot find `center_node_index`"
-        center_node_feat = data.x_og[data.center_node_index].detach().clone()
+        center_node_feat = data.x[data.center_node_index].detach().clone()
         center_cell_exp = center_node_feat[self.bm_exp_feat].float()
         data.node_y = center_cell_exp.view(1, -1)
         return data
@@ -119,7 +119,7 @@ class AddCenterCellIdentifier(object):
             "Only subgraphs with center nodes are supported, cannot find `center_node_index`"
         center_cell_identifier_column = torch.zeros((data.x_og.shape[0], 1), dtype=data.x_og.dtype)
         center_cell_identifier_column[data.center_node_index, 0] = 1.
-        data.x_og = torch.cat([data.x_og, center_cell_identifier_column], dim=1)
+        data.x = torch.cat([data.x, center_cell_identifier_column], dim=1)
         return data
 
 
