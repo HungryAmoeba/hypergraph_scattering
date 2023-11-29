@@ -18,6 +18,11 @@ dhg = "^0.9.3"
 einops = "^0.7.0"
 torch-geometric = "^2.4.0"
 ipykernel = "^6.26.0"
+pytorch-lightning = "^2.1.2"
+tensorboard = "^2.15.1"
+tensorboardx = "^2.6.2.2"
+anndata = "^0.10.3"
+scanpy = "^1.9.6"
 
 
 [build-system]
