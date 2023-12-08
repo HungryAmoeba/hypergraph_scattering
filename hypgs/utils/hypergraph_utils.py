@@ -132,7 +132,7 @@ def get_cliques_planar(graph, njobs = 1):
                     mask_2 = (periph_edge_index==node) + (periph_edge_index == edge_[1]) 
                     hyperedge_found = mask_1.all(0).any() * mask_2.all(0).any()
                     if hyperedge_found:
-                        breakpoint()
+                        #breakpoint()
                         four_cliques.append(torch.cat([edge_, torch.tensor([node]), torch.tensor([node_idx])])[None,:])
         
         if len(four_cliques)>0:

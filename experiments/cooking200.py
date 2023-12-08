@@ -11,8 +11,28 @@ from dhg.data import Cooking200, CoauthorshipCora
 from dhg.models import HGNN, HGNNP
 from dhg.random import set_seed
 from dhg.metrics import HypergraphVertexClassificationEvaluator as Evaluator
-from hypgs.models.hyper_scattering_net import HSN
 import argparse
+
+import sys
+sys.path.append('..')
+from dhg import Hypergraph
+from hypgs.models.hsn_pyg import HSN
+from hypgs.utils.data import HGDataset
+from torch_geometric.loader import DataLoader
+from torch_geometric.data import Dataset
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import EarlyStopping
+from torch.utils.data import random_split
+from pytorch_lightning.loggers import TensorBoardLogger
+
+# run training on the datasets provided in dhg, such as cooking200 and coauthorshipcora 
+
+
+
+
+
+
+
 
 
 def train(net, X, A, lbls, train_idx, optimizer, epoch, device, args):

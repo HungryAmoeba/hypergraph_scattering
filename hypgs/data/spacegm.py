@@ -51,6 +51,7 @@ class CellularGraphDataset(Dataset):
                  subgraph_radius_limit=-1,
                  sampling_avoid_unassigned=True,
                  unassigned_cell_type='Unassigned',
+                 num_graphs = None,
                  **feature_kwargs):
         """ Initialize the dataset
 
@@ -85,6 +86,8 @@ class CellularGraphDataset(Dataset):
         self.processed_folder_name = processed_folder_name
         os.makedirs(self.raw_dir, exist_ok=True)
         os.makedirs(self.processed_dir, exist_ok=True)
+
+        self.num_graphs = num_graphs
 
         # Find all unique cell types in the dataset
         if cell_type_mapping is None or cell_type_freq is None:
@@ -194,7 +197,10 @@ class CellularGraphDataset(Dataset):
     @property
     def processed_file_names(self):
         # Only files for full graphs
-        return sorted([f for f in os.listdir(self.processed_dir) if f.endswith('.gpt') and 'hop' not in f])
+        if self.num_graphs is not None:
+            return sorted([f for f in os.listdir(self.processed_dir) if f.endswith('.gpt') and 'hop' not in f])[:self.num_graphs]
+        else:
+            return sorted([f for f in os.listdir(self.processed_dir) if f.endswith('.gpt') and 'hop' not in f])
 
     def len(self):
         return self.N
@@ -208,7 +214,7 @@ class CellularGraphDataset(Dataset):
                 continue
 
             # Transform networkx graphs to pyg data objects, and add features for nodes and edges
-            breakpoint()
+            #breakpoint()
             data_list = nx_to_tg_graph(G,
                                        node_features=self.node_features,
                                        edge_features=self.edge_features,

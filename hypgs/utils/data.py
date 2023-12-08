@@ -6,6 +6,7 @@ import torch
 from torch_geometric.data.hypergraph_data import HyperGraphData
 from torch_geometric.data import Dataset
 from dhg import Graph, Hypergraph
+from tqdm import tqdm
 
 def get_hyperedge_index(HG):
     """
@@ -27,7 +28,7 @@ def get_hyperedge_index(HG):
 
     return hyperedge_index
 
-def get_HyperGraphData(HG, node_features, hyperedge_attr, labels):
+def get_HyperGraphData(HG, node_features, hyperedge_attr, labels, other_data=None):
     """
     Get the HyperGraphData class from a hypergraph object and the corresponding node features, hyperedge attributes and labels.
     
@@ -40,29 +41,41 @@ def get_HyperGraphData(HG, node_features, hyperedge_attr, labels):
             (default: :obj:`None`)
         labels (torch.Tensor, optional): Graph-level or node-level ground-truth
             labels with arbitrary shape. (default: :obj:`None`)
+        other_data (dict, optional): Dictionary of additional data. (default: :obj:`None`)
     
     Returns:
         a HyperGraphData object
     """
     hyperedge_index = get_hyperedge_index(HG)
-    return HyperGraphData(x=node_features, edge_index=hyperedge_index, edge_attr=hyperedge_attr, y=labels)
+    # disregard edge_attr for the time being
+    # should be edge_attr = hyperedge_attr, but I'm setting it to none for now
+    data = HyperGraphData(x=node_features, edge_index=hyperedge_index, edge_attr=hyperedge_attr, y=labels)
+    if other_data is not None:
+        for key in other_data.keys():
+            data[key] = other_data[key]
+            if key == 'graph_y' and labels is None:
+                data['y'] = other_data[key]
+    return data
 
 def get_HG_data_list(original_dataset, to_hg_func=lambda g: Hypergraph.from_graph_kHop(g, k=1)):
     hgdataset = []
-    for graph_dat in original_dataset:
-        # Access the first graph
-        # Get the edge list
-        edge_list = graph_dat.edge_index.t()
-        num_vertices = graph_dat.num_nodes
-        # Get node features
-        node_features = graph_dat.x
-        # Get labels
-        labels = graph_dat.y
+    for graph_dat in tqdm(original_dataset, desc='Converting to hypergraph data'):
+        edge_list = graph_dat.edge_index.t() if 'edge_index' in graph_dat.keys() else None
+        num_vertices = graph_dat.num_nodes # if 'num_nodes' in graph_dat.keys() else None
+        node_features = graph_dat.x if 'x' in graph_dat.keys() else None
+        labels = graph_dat.y if 'y' in graph_dat.keys() else None
+
         G = Graph(num_vertices, edge_list)
         HG1 = to_hg_func(G)
+
+        # Extract all keys other than 'edge_index', 'num_nodes', 'x', 'y'
+        other_keys = [key for key in graph_dat.keys() if key not in ['edge_index', 'num_nodes', 'x', 'y', 'edge_attr']]
+        other_data = {key: graph_dat[key] for key in other_keys}
+        
         X, lbl = node_features, labels
         Y = torch.zeros(HG1.num_e, X.shape[1]) # use all zero hyperedge attributes
-        hgdataset.append(get_HyperGraphData(HG1, X, Y, lbl))
+        hgdataset.append(get_HyperGraphData(HG1, X, Y, lbl, other_data))
+        #import pdb; pdb.set_trace()
     return hgdataset
 
 class HGDataset(Dataset):

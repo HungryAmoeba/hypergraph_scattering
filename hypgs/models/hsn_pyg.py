@@ -170,8 +170,9 @@ class HyperScatteringModule(nn.Module):
             node_features.append(node_feat)
             edge_features.append(edge_feat)
         # Combine the diffusion levels into a single tensor.
-        diffusion_levels = rearrange(node_features, 'i j k -> i j k')
-        edge_diffusion_levels = rearrange(edge_features, 'i j k -> i j k')
+
+        diffusion_levels = rearrange(node_features, 'i j k -> i j k').float()
+        edge_diffusion_levels = rearrange(edge_features, 'i j k -> i j k').float()
         wavelet_coeffs = torch.einsum("ij,jkl->ikl", self.wavelet_constructor, diffusion_levels) # J x num_nodes x num_features x 1
         wavelet_coeffs_edges = torch.einsum("ij,jkl->ikl", self.wavelet_constructor, edge_diffusion_levels)
         # TODO add batch norm here!
@@ -299,7 +300,7 @@ class HSN(pl.LightningModule):
 
         self.mlp = nn.Sequential(
             self.fc1,
-            self.batch_norm1,
+            #self.batch_norm1,
             self.relu,
             self.fc2
         )
@@ -348,19 +349,23 @@ class HSN(pl.LightningModule):
                 assert batch is not None
             if self.pooling == 'mean':
                 x = global_mean_pool(x, batch)
+                hyperedge_attr = global_mean_pool(hyperedge_attr, batch)
             elif self.pooling == 'max':
                 x = global_max_pool(x, batch)
+                hyperedge_attr = global_max_pool(hyperedge_attr, batch)
             elif self.pooling == 'sum':
                 x = global_add_pool(x, batch)
+                hyperedge_attr = global_add_pool(hyperedge_attr, batch)
             elif self.pooling == 'attention':
                 raise NotImplementedError
                 # x = self.attention_pool(x, batch)
-        x = self.batch_norm(x)
+                # hyperedge_attr = self.attention_pool(hyperedge_attr, batch)
+        #x = self.batch_norm(x)
 
         x = self.mlp(x)
 
         # compute the same process on the edges:
-        hyperedge_attr = self.batch_norm(hyperedge_attr)
+        #hyperedge_attr = self.batch_norm(hyperedge_attr)
         hyperedge_attr = self.mlp(hyperedge_attr)
 
         if self.task == 'classification':
@@ -373,9 +378,10 @@ class HSN(pl.LightningModule):
     def common_step(self, batch, batch_idx, phase):
         x, edge_index, edge_attr, y, batch_id = batch.x, batch.edge_index, batch.edge_attr, batch.y, batch.batch
         out, _ = self.forward(x, edge_index, hyperedge_attr=edge_attr, batch=batch_id)
-
+        #import pdb; pdb.set_trace()
+        y = y[0]
         if self.task == 'classification':
-            loss = F.cross_entropy(out, y)
+            loss = F.cross_entropy(out, y) # set to y[0] for spacegm, this may break things later
         elif self.task == 'regression':
             loss = F.mse_loss(out, y)
         elif self.task == 'node_representation':

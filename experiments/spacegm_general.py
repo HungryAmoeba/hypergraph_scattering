@@ -29,6 +29,16 @@ from hypgs.utils.hypergraph_utils import CliqueHyperEdgeTransform
 from hypgs.data.spacegm import CellularGraphDataset
 from hypgs.data.spacegm_transforms import AddCenterCellType, AddGraphLabel, FeatureMask 
 
+from dhg import Hypergraph
+from hypgs.models.hsn_pyg import HSN
+from hypgs.utils.data import HGDataset
+from torch_geometric.loader import DataLoader
+from torch_geometric.data import Dataset
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import EarlyStopping
+from torch.utils.data import random_split
+from pytorch_lightning.loggers import TensorBoardLogger
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Process scattering on a dataset')
@@ -42,7 +52,7 @@ if __name__ == '__main__':
     n = len(sys.argv)
     if n != 5:
         print('Error. Usage: python spacegm_general.py dataset_name delete_processed classifier_name scattering_type')
-        print("example: python spacegm_general.py upmc 1 svm asym")
+        print("example: python spacegm_general.py upmc 0 svm asym")
         exit()
 
     dataset_name = str(sys.argv[1])
@@ -115,7 +125,7 @@ if __name__ == '__main__':
     }
     dataset_kwargs.update(feature_kwargs)
 
-    dataset = CellularGraphDataset(dataset_root, **dataset_kwargs)
+    dataset = CellularGraphDataset(dataset_root,num_graphs = 150, **dataset_kwargs)
 
 
     graph_label_file = os.path.join(dataset_root, "upmc_labels_renamed.csv")
@@ -133,91 +143,139 @@ if __name__ == '__main__':
     ]
     dataset.set_transforms(transformers)
 
-    breakpoint()
+    #breakpoint()
 
     print(f'finished processing {dataset_name}')
-    import pdb; pdb.set_trace()
-    print("modeling using logistic regression")
-    n_splits = 5
-    print(f"training with {n_splits}-fold")
+    for k, v in dataset.cached_data.items():
+        del dataset.cached_data[k].edge_attr
+    to_hg_func = lambda g: Hypergraph.from_graph_kHop(g,1)
+    hgdataset = HGDataset(dataset, to_hg_func)
 
-    if classifier == 'logistic':
-        model = make_pipeline(StandardScaler(), LogisticRegression(max_iter = 1000))
-        print('initialized logistic regression')
-    else:
-        model = make_pipeline(StandardScaler(), SVC(kernel='rbf'))
-        print('initialized SVM with RBF kernel')
-    kf = KFold(n_splits = n_splits)
-    loader = DataLoader(dataset, batch_size = 1, shuffle = True)
+    # assume that we have the rest of this settled 
+    # need to define in_channels and out_channels 
 
-    # Perform k-fold cross-validation
-    fold_scores = []
-    fold_accuracies = []
-    fold_precisions = []
-    fold_recalls = []
-    fold_f1_scores = []
-    #import pdb; pdb.set_trace()
-    #dataset.x = torch.nan_to_num(dataset.x)
-    for train_indices, test_indices in kf.split(dataset):
-        # Split the dataset into train and test folds
-        train_data = [dataset[train_idx] for train_idx in train_indices]
-        test_data = [dataset[test_idx] for test_idx in test_indices]
+    dataset_size = len(hgdataset)
+    train_size = int(0.7 * dataset_size)
+    val_size = int(0.15 * dataset_size)
+    test_size = dataset_size - train_size - val_size
+    train_dataset, val_dataset, test_dataset = random_split(hgdataset, [train_size, val_size, test_size])
 
-        train_dat_x = torch.cat([d.x for d in train_data])
-        train_dat_y = torch.cat([d.graph_y for d in train_data])[:,0]
+    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
-        test_dat_x = torch.cat([d.x for d in test_data])
-        test_dat_y = torch.cat([d.graph_y for d in test_data])[:,0]
+    in_channels = hgdataset.num_node_features 
 
-        # Train the logistic regression model
-        model.fit(train_dat_x, train_dat_y)
+    # lets do binary label classification for now 
 
-        # Make predictions on the test fold
-        y_pred = model.predict(test_dat_x)
+    out_channels = 2
 
-        # Calculate evaluation metrics
-        accuracy = accuracy_score(test_dat_y, y_pred)
-        precision = precision_score(test_dat_y, y_pred, average='macro')
-        recall = recall_score(test_dat_y, y_pred, average='macro')
-        f1 = f1_score(test_dat_y, y_pred, average='macro')
+    model = HSN(in_channels = in_channels,
+                hidden_channels = 32,
+                out_channels = out_channels,
+                trainable_laziness=False,
+                trainable_scales = False,
+                activation = 'modulus',
+                fixed_weights=True,
+                layout=['hsm', 'hsm'],
+                normalize = 'right',
+                pooling='mean',
+                task='classification')
+    
+    early_stoping_callback = EarlyStopping(monitor = 'val_loss', patience = 10, verbose= True, mode = 'min')
+    logger = TensorBoardLogger('lightning_logs', name = 'hsn_space_gm')
+    trainer = pl.Trainer(
+        max_epochs = 100,
+        logger = logger,
+        callbacks = [early_stoping_callback],
+    )
 
-        # Append scores and metrics to lists
-        fold_scores.append(model.score(test_dat_x, test_dat_y))
-        fold_accuracies.append(accuracy)
-        fold_precisions.append(precision)
-        fold_recalls.append(recall)
-        fold_f1_scores.append(f1)
+    trainer.fit(model, train_loader, val_loader)
+    test_result = trainer.test(model, test_loader)
 
-    # Calculate mean and standard deviation of scores
-    mean_score = sum(fold_scores) / n_splits
-    std_score = torch.tensor(fold_scores).std().item()
+    print(test_result)
 
-    # Calculate mean and standard deviation of metrics
-    mean_accuracy = sum(fold_accuracies) / n_splits
-    std_accuracy = torch.tensor(fold_accuracies).std().item()
-    mean_precision = sum(fold_precisions) / n_splits
-    std_precision = torch.tensor(fold_precisions).std().item()
-    mean_recall = sum(fold_recalls) / n_splits
-    std_recall = torch.tensor(fold_recalls).std().item()
-    mean_f1_score = sum(fold_f1_scores) / n_splits
-    std_f1_score = torch.tensor(fold_f1_scores).std().item()
+    # print("modeling using logistic regression")
+    # n_splits = 5
+    # print(f"training with {n_splits}-fold")
 
-    # Print scores and performance metrics
-    print(f"Cross-Validation Scores: {fold_scores}")
-    print(f"Mean Score: {mean_score:.4f} ± {std_score:.4f}")
-    print("")
+    # if classifier == 'logistic':
+    #     model = make_pipeline(StandardScaler(), LogisticRegression(max_iter = 1000))
+    #     print('initialized logistic regression')
+    # else:
+    #     model = make_pipeline(StandardScaler(), SVC(kernel='rbf'))
+    #     print('initialized SVM with RBF kernel')
+    # kf = KFold(n_splits = n_splits)
+    # loader = DataLoader(dataset, batch_size = 1, shuffle = True)
 
-    print(f"Accuracy Scores: {fold_accuracies}")
-    print(f"Mean Accuracy: {mean_accuracy:.4f} ± {std_accuracy:.4f}")
-    print("")
+    # # Perform k-fold cross-validation
+    # fold_scores = []
+    # fold_accuracies = []
+    # fold_precisions = []
+    # fold_recalls = []
+    # fold_f1_scores = []
+    # #import pdb; pdb.set_trace()
+    # #dataset.x = torch.nan_to_num(dataset.x)
+    # for train_indices, test_indices in kf.split(dataset):
+    #     # Split the dataset into train and test folds
+    #     train_data = [dataset[train_idx] for train_idx in train_indices]
+    #     test_data = [dataset[test_idx] for test_idx in test_indices]
 
-    print(f"Precision Scores: {fold_precisions}")
-    print(f"Mean Precision: {mean_precision:.4f} ± {std_precision:.4f}")
-    print("")
+    #     train_dat_x = torch.cat([d.x for d in train_data])
+    #     train_dat_y = torch.cat([d.graph_y for d in train_data])[:,0]
 
-    print(f"Recall Scores: {fold_recalls}")
-    print(f"Mean Recall: {mean_recall:.4f} ± {std_recall:.4f}")
-    print("")
+    #     test_dat_x = torch.cat([d.x for d in test_data])
+    #     test_dat_y = torch.cat([d.graph_y for d in test_data])[:,0]
 
-    print(f"F1 Scores: {fold_f1_scores}")
-    print(f"Mean F1 Score: {mean_f1_score:.4f} ± {std_f1_score:.4f}")
+    #     # Train the logistic regression model
+    #     model.fit(train_dat_x, train_dat_y)
+
+    #     # Make predictions on the test fold
+    #     y_pred = model.predict(test_dat_x)
+
+    #     # Calculate evaluation metrics
+    #     accuracy = accuracy_score(test_dat_y, y_pred)
+    #     precision = precision_score(test_dat_y, y_pred, average='macro')
+    #     recall = recall_score(test_dat_y, y_pred, average='macro')
+    #     f1 = f1_score(test_dat_y, y_pred, average='macro')
+
+    #     # Append scores and metrics to lists
+    #     fold_scores.append(model.score(test_dat_x, test_dat_y))
+    #     fold_accuracies.append(accuracy)
+    #     fold_precisions.append(precision)
+    #     fold_recalls.append(recall)
+    #     fold_f1_scores.append(f1)
+
+    # # Calculate mean and standard deviation of scores
+    # mean_score = sum(fold_scores) / n_splits
+    # std_score = torch.tensor(fold_scores).std().item()
+
+    # # Calculate mean and standard deviation of metrics
+    # mean_accuracy = sum(fold_accuracies) / n_splits
+    # std_accuracy = torch.tensor(fold_accuracies).std().item()
+    # mean_precision = sum(fold_precisions) / n_splits
+    # std_precision = torch.tensor(fold_precisions).std().item()
+    # mean_recall = sum(fold_recalls) / n_splits
+    # std_recall = torch.tensor(fold_recalls).std().item()
+    # mean_f1_score = sum(fold_f1_scores) / n_splits
+    # std_f1_score = torch.tensor(fold_f1_scores).std().item()
+
+    # # Print scores and performance metrics
+    # print(f"Cross-Validation Scores: {fold_scores}")
+    # print(f"Mean Score: {mean_score:.4f} ± {std_score:.4f}")
+    # print("")
+
+    # print(f"Accuracy Scores: {fold_accuracies}")
+    # print(f"Mean Accuracy: {mean_accuracy:.4f} ± {std_accuracy:.4f}")
+    # print("")
+
+    # print(f"Precision Scores: {fold_precisions}")
+    # print(f"Mean Precision: {mean_precision:.4f} ± {std_precision:.4f}")
+    # print("")
+
+    # print(f"Recall Scores: {fold_recalls}")
+    # print(f"Mean Recall: {mean_recall:.4f} ± {std_recall:.4f}")
+    # print("")
+
+    # print(f"F1 Scores: {fold_f1_scores}")
+    # print(f"Mean F1 Score: {mean_f1_score:.4f} ± {std_f1_score:.4f}")
