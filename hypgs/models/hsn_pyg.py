@@ -135,7 +135,7 @@ class HyperDiffusion(MessagePassing):
         return out_node
 
 class HyperScatteringModule(nn.Module):
-    def __init__(self, in_channels, trainable_laziness=False, trainable_scales=False, activation="blis", fixed_weights=True, normalize="right"):
+    def __init__(self, in_channels, trainable_laziness=False, trainable_scales=False, activation="blis", fixed_weights=True, normalize="right", reshape=True):
         super().__init__()
         self.in_channels = in_channels
         self.trainable_laziness = trainable_laziness
@@ -157,6 +157,7 @@ class HyperScatteringModule(nn.Module):
         elif activation == "leaky_relu":
             m = nn.LeakyReLU()
             self.activations = [lambda x: m(x)]
+        self.reshape = reshape
 
     def forward(self, x: torch.Tensor, hyperedge_index: torch.Tensor,
                 hyperedge_weight: Optional[torch.Tensor] = None,
@@ -178,8 +179,8 @@ class HyperScatteringModule(nn.Module):
         # TODO add batch norm here!
         activated = [self.activations[i](wavelet_coeffs) for i in range(len(self.activations))]
         activated_edges = [self.activations[i](wavelet_coeffs_edges) for i in range(len(self.activations))]
-        s_nodes = rearrange(activated, 'a w n f -> n (w f a)')
-        s_edges = rearrange(activated_edges, 'a w e f -> e (w f a)')
+        s_nodes = rearrange(activated, 'a w n f -> n (w f a)') if self.reshape else torch.stack(activated)
+        s_edges = rearrange(activated_edges, 'a w e f -> e (w f a)') if self.reshape else torch.stack(activated_edges)
         return s_nodes, s_edges
     
     def out_features(self):
