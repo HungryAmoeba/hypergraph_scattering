@@ -334,6 +334,15 @@ class HSN(pl.LightningModule):
             torch.Tensor: Hyperedge attribute tensor.
 
         """
+        # row, col = hyperedge_index
+        # edge_batch = batch[row]
+        curr_value = 0 
+        node_in_hyperedge = []
+        for ind,val in enumerate(hyperedge_index[1,:]):
+            if val == curr_value:
+                node_in_hyperedge.append(hyperedge_index[0, ind])
+                curr_value += 1
+        edge_batch = torch.tensor(node_in_hyperedge, device = hyperedge_index.device)
         for il, layer in enumerate(self.layers):
             if self.layout[il] == 'hsm':
                 x, hyperedge_attr = layer(x, hyperedge_index, hyperedge_weight, hyperedge_attr, num_edges)
@@ -352,12 +361,16 @@ class HSN(pl.LightningModule):
                 x = global_mean_pool(x, batch)
                 hyperedge_attr = global_mean_pool(hyperedge_attr, batch)
             elif self.pooling == 'max':
+                #import pdb; pdb.set_trace()
                 x = global_max_pool(x, batch)
-                hyperedge_attr = global_max_pool(hyperedge_attr, batch)
+                if edge_batch is not None:
+                    hyperedge_attr = global_max_pool(hyperedge_attr, edge_batch)
             elif self.pooling == 'sum':
                 x = global_add_pool(x, batch)
                 hyperedge_attr = global_add_pool(hyperedge_attr, batch)
             elif self.pooling == 'attention':
+                # use a hyper GNN to learn attention weights?? I don't know...
+                
                 raise NotImplementedError
                 # x = self.attention_pool(x, batch)
                 # hyperedge_attr = self.attention_pool(hyperedge_attr, batch)
@@ -367,7 +380,7 @@ class HSN(pl.LightningModule):
 
         # compute the same process on the edges:
         #hyperedge_attr = self.batch_norm(hyperedge_attr)
-        hyperedge_attr = self.mlp(hyperedge_attr)
+        #hyperedge_attr = self.mlp(hyperedge_attr)
 
         if self.task == 'classification':
             # I don't think this is needed since F.cross_entropy assumes unnormalized logits
@@ -380,8 +393,9 @@ class HSN(pl.LightningModule):
         x, edge_index, edge_attr, y, batch_id = batch.x, batch.edge_index, batch.edge_attr, batch.y, batch.batch
         out, _ = self.forward(x, edge_index, hyperedge_attr=edge_attr, batch=batch_id)
         #import pdb; pdb.set_trace()
-        y = y[0]
+        #y = y[0]
         if self.task == 'classification':
+            #import pdb; pdb.set_trace()
             loss = F.cross_entropy(out, y) # set to y[0] for spacegm, this may break things later
         elif self.task == 'regression':
             loss = F.mse_loss(out, y)

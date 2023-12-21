@@ -78,6 +78,20 @@ def get_HG_data_list(original_dataset, to_hg_func=lambda g: Hypergraph.from_grap
         #import pdb; pdb.set_trace()
     return hgdataset
 
+class HGDatasetFromHGList(Dataset):
+    def __init__(self, HG_list, node_features, hyperedge_attrs, labels, other_data=None, transform=None, pre_transform=None):
+        super(HGDatasetFromHGList, self).__init__('.', transform, pre_transform)
+        self.data_list = []
+        for HG, node_feature, hyperedge_attr, label in zip(HG_list, node_features, hyperedge_attrs, labels):
+            # subtract 1 from the label so the counts start at zero
+            self.data_list.append(get_HyperGraphData(HG, node_feature, hyperedge_attr, torch.tensor(label - 1).unsqueeze(0), other_data))
+
+    def len(self):
+        return len(self.data_list)
+
+    def get(self, idx):
+        return self.data_list[idx]
+
 class HGDataset(Dataset):
     def __init__(self, original_dataset, to_hg_func=lambda g: Hypergraph.from_graph_kHop(g, k=1), transform=None, pre_transform=None):
         super(HGDataset, self).__init__('.', transform, pre_transform)
