@@ -135,19 +135,37 @@ class HyperDiffusion(MessagePassing):
         return out_node
 
 class HyperScatteringModule(nn.Module):
-    def __init__(self, in_channels, trainable_laziness=False, trainable_scales=False, activation="blis", fixed_weights=True, normalize="right", reshape=True):
+    def __init__(self, in_channels, trainable_laziness=False, trainable_scales=False, activation="blis", fixed_weights=True, normalize="right", reshape=True, scale_list = None):
         super().__init__()
         self.in_channels = in_channels
         self.trainable_laziness = trainable_laziness
         self.diffusion_layer1 = HyperDiffusion(in_channels, in_channels, trainable_laziness, fixed_weights, normalize)
-        self.wavelet_constructor = torch.nn.Parameter(torch.tensor([
-            [1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 1, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, -1],
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
-        ], dtype=torch.float, requires_grad=trainable_scales))
+        if scale_list is None:
+            self.wavelet_constructor = torch.nn.Parameter(torch.tensor([
+                [1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 1, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, -1],
+                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+            ], dtype=torch.float, requires_grad=trainable_scales))
+            self.diffusion_levels = 16
+        else:
+            # ensure that scale list is an increasing list of integers with 0 as the first element
+            # ensure that 1 is the second element
+            assert all(isinstance(x, int) for x in scale_list)
+            assert all(scale_list[i] < scale_list[i+1] for i in range(len(scale_list)-1))
+            assert scale_list[0] == 0
+            assert scale_list[1] == 1
+
+            self.diffusion_levels = scale_list[-1]
+            wavelet_matrix = torch.zeros(len(scale_list), self.diffusion_levels+1, dtype = torch.float, requires_grad = trainable_scales)
+            for i in range(len(scale_list) - 1):
+                wavelet_matrix[i, scale_list[i]] = 1
+                wavelet_matrix[i, scale_list[i+1]] = -1
+            wavelet_matrix[-1, -1] = 1
+            self.wavelet_constructor = torch.nn.Parameter(wavelet_matrix)
+
         if activation == "blis":
             self.activations = [lambda x: torch.relu(x), lambda x: torch.relu(-x)]
         elif activation == None:
@@ -166,7 +184,7 @@ class HyperScatteringModule(nn.Module):
         features = x.shape[1]
         node_features = [x]
         edge_features = [hyperedge_attr]
-        for i in range(16):
+        for i in range(self.diffusion_levels):
             node_feat, edge_feat = self.diffusion_layer1(x=node_features[-1], hyperedge_index=hyperedge_index, hyperedge_weight=hyperedge_weight, hyperedge_attr=edge_features[-1])
             node_features.append(node_feat)
             edge_features.append(edge_feat)
