@@ -174,3 +174,5 @@ misc/
 job_*
 *.out
 trash/
+*.old
+*.csv

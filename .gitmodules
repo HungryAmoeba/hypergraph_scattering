@@ -1,0 +1,3 @@
+[submodule "dmae"]
+	path = dmae
+	url = https://github.com/xingzhis/dmae.git
