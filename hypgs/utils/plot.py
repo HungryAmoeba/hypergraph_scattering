@@ -26,13 +26,13 @@ def enlarge_hull(points, hull, factor=0.1):
         new_vertices.append(new_vertex)
     return np.array(new_vertices)
 
-def compute_enlarged_hulls(df):
+def compute_enlarged_hulls(df, factor=0.1):
     enlarged_hulls = []
 
     for set_index, group in df.groupby('he_idx'):
         points = group[['x', 'y']].values
         hull = ConvexHull(points)
-        enlarged_hull = enlarge_hull(points, hull)
+        enlarged_hull = enlarge_hull(points, hull, factor)
 
         # Store the enlarged hull and the mean value for color coding
         enlarged_hulls.append(enlarged_hull)

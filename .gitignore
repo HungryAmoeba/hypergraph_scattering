@@ -176,3 +176,14 @@ job_*
 trash/
 *.old
 *.csv
+wandb/
+*.png
+*.gif
+*.h5ad
+*.npy
+*.html
+MNIST/
+*.zip
+dmae/
+conf/
+outputs/
